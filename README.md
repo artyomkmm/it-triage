@@ -1,78 +1,36 @@
-# IT Ticket Triage (Notebook-first) + Streamlit
+# IT Ticket Triage (ML + Policy + GPT)
 
-Это проект для triage IT-тикетов: пользователь вводит текст тикета → система возвращает:
-- `final_priority` (low / medium / high / urgent)
-- объяснение и next steps от GPT (Transformer)
-- топ похожих исторических шаблонов тикетов (без дублей)
-- audit-лог (без утечек PII)
-- feedback → можно улучшать модель
+This project is an end-to-end **ticket triage** system: a user submits a ticket text and the system predicts the ticket **priority** (`low / medium / high / urgent`), shows relevant context, and produces a structured explanation of the decision.
 
-## 1) Быстрый старт (чтобы всё заработало)
+## What it does
+- Predicts priority for incoming tickets.
+- Applies **hard policy rules** to guarantee minimum severity for critical signals (e.g., fraud/security/outage).
+- Generates an **auditable JSON** explanation: summary, reasons, immediate actions, clarifying questions, risks.
+- Shows **similar historical tickets** (deduplicated) to improve transparency and debugging.
+- Masks PII before any model/LLM processing.
 
-### 1.1 Установка зависимостей
-```bash
-python -m venv .venv
-# mac/linux:
-source .venv/bin/activate
-# windows:
-# .venv\Scripts\activate
+## Core approach (architecture)
+**ML → Policy → GPT**
+- **ML (fast & cheap):** a local scikit-learn classifier provides `ml_priority` + confidence.
+- **Policy (reliability):** deterministic rules set a minimum floor priority for critical cases.
+- **GPT (audit + support):** used after ML+policy to generate structured JSON output and can **only raise** priority when ML confidence is low (never lower it, never bypass policy).
 
-pip install -r requirements.txt
-```
+## Technologies used
+- **Jupyter Notebook**: EDA, data quality checks, training, metrics, artifact export.
+- **scikit-learn**: TF-IDF vectorization (char n-grams) + classification (e.g., Logistic Regression / SGD), evaluation metrics.
+- **LangChain + OpenAI**: GPT-based structured reasoning/explanation in **strict JSON** format.
+- **Streamlit**: simple UI for demo/“prod-like” interaction.
+- **joblib**: saving/loading model, vectorizer, retrieval bundle, metrics.
+- **Python**: glue code, policy rules, PII masking, logging.
 
-### 1.2 Ключ OpenAI
-Скопируй `.env.example` → `.env` и вставь ключ:
-```bash
-cp .env.example .env
-```
+## Outputs (artifacts)
+After training, the notebook exports model artifacts used by the Streamlit app:
+- `priority_vectorizer.joblib`
+- `priority_model.joblib`
+- `retrieval_bundle.joblib`
+- `metrics.json`
 
-### 1.3 Запуск Streamlit
-```bash
-streamlit run app.py
-```
-
-Откроется UI. Вставляй тикет → получишь результат.
-
-## 2) Где обучение, EDA, метрики, объяснимость?
-
-Основной файл проекта — ноутбук:
-
-- `notebooks/it_ticket_triage_full.ipynb`
-
-Там:
-- большой EDA с графиками
-- анализ дублей/шума в разметке
-- обучение модели (train/test split)
-- метрики, confusion matrix
-- “какие слова важны” (feature importance)
-- RAG-подобный retrieval похожих тикетов (уникальные шаблоны)
-- GPT (Transformer) для объяснения и для fallback, если ML не уверен
-- сохранение артефактов в `artifacts/`
-
-## 3) Артефакты модели
-Streamlit использует:
-- `artifacts/priority_vectorizer.joblib`
-- `artifacts/priority_model.joblib`
-- `artifacts/retrieval_bundle.joblib`
-- `artifacts/metrics.json`
-
-Ты можешь переобучить всё из ноутбука (в конце есть секция “Save artifacts”),
-после чего просто перезапустить Streamlit.
-
-## 4) Важно про качество
-Этот датасет `synthetic_it_support_tickets.csv` **сильно шаблонный**:
-- всего ~96 уникальных `initial_message`
-- приоритеты внутри одинаковых текстов часто разные
-
-В ноутбуке есть отдельный раздел, который это доказывает графиками.
-Из-за этого чистый ML часто “не может выучить” настоящие закономерности.
-
-Поэтому в продовой логике triage:
-- критичные кейсы (security/fraud/outage, украли деньги и т.п.) поднимаются policy-слоем
-- GPT используется как объяснялка и fallback для “нестандартных” тикетов
-
-Это даёт:
-- предсказуемость (policy)
-- интерпретируемость (важные слова/фичи + GPT)
-- обучаемость (feedback)
-
+## Notes on robustness
+- The project includes sanity checks to avoid deploying a “blind” vectorizer (e.g., zero feature matches / NNZ≈0).
+- Deduplication is applied to the retrieval layer to prevent showing the same ticket multiple times.
+- Policy rules ensure critical scenarios never get under-prioritized even if ML is uncertain.
