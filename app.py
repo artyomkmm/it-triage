@@ -1,4 +1,3 @@
-\
 import os
 import re
 import json
@@ -14,14 +13,10 @@ import streamlit as st
 from dotenv import load_dotenv
 from sklearn.metrics.pairwise import cosine_similarity
 
-# LLM (Transformer) via LangChain
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 
-# ---------------------------
-# Config
-# ---------------------------
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(ROOT_DIR, "data")
 ARTIFACTS_DIR = os.path.join(ROOT_DIR, "artifacts")
@@ -39,9 +34,6 @@ ALLOWED_PRIORITIES = ["low", "medium", "high", "urgent"]
 PRIORITY_RANK = {"low": 0, "medium": 1, "high": 2, "urgent": 3}
 
 
-# ---------------------------
-# PII masking
-# ---------------------------
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 URL_RE = re.compile(r"https?://\S+|www\.\S+")
@@ -62,25 +54,15 @@ def mask_pii(text: str) -> str:
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
 
-
-# ---------------------------
-# Policy layer (hard rules)
-# ---------------------------
 SECURITY_PATTERNS = [
     r"\bstolen\b", r"\btheft\b", r"\bfraud\b", r"\bscam\b", r"\bhacked\b",
     r"\bbreach\b", r"\bcompromised\b", r"\bunauthorized\b", r"\bsuspicious login\b",
     r"\bphishing\b", r"\bmalware\b", r"\bransomware\b",
-    # RU
-    r"\bукрал[аои]?\b", r"\bкраж", r"\bмошенн", r"\bвзлом", r"\bутеч", r"\bфишинг\b",
-    r"\bнесанкцион", r"\bподозрительн", r"\bсписал[иа]\b",
 ]
 
 OUTAGE_PATTERNS = [
     r"\bdown\b", r"\boutage\b", r"\bunavailable\b", r"\boffline\b",
     r"\b503\b", r"\b500\b", r"\bservice unavailable\b", r"\bprod\b", r"\bproduction\b",
-    # RU
-    r"\bне работает\b", r"\bнедоступ", r"\bупал[аои]?\b", r"\bошибка 500\b", r"\bошибка 503\b",
-    r"\bпрод\b", r"\bпродакшн\b",
 ]
 
 URGENT_WORDS = [r"\burgent\b", r"\basap\b", r"\bimmediately\b", r"\bсрочно\b", r"\bнемедленно\b"]
@@ -102,19 +84,14 @@ def policy_min_priority(text: str) -> Optional[str]:
     """
     t = (text or "").lower()
 
-    # Security/fraud/money theft => urgent
     if _has_any(SECURITY_PATTERNS, t):
-        # Если в тексте ещё и деньги/суммы — точно urgent
         if _has_any(MONEY_PATTERNS, t):
             return "urgent"
-        # даже без сумм — security обычно минимум high/urgent
         return "urgent"
 
-    # Outage/prod down => минимум high
     if _has_any(OUTAGE_PATTERNS, t):
         return "high"
 
-    # Explicit urgency words => минимум high
     if _has_any(URGENT_WORDS, t):
         return "high"
 
@@ -127,9 +104,6 @@ def apply_policy_floor(ml_priority: str, floor: Optional[str]) -> str:
     return floor if PRIORITY_RANK[floor] > PRIORITY_RANK[ml_priority] else ml_priority
 
 
-# ---------------------------
-# Loading artifacts
-# ---------------------------
 @st.cache_resource
 def load_artifacts():
     if not os.path.exists(MODEL_PATH) or not os.path.exists(VECTORIZER_PATH) or not os.path.exists(RETRIEVAL_PATH):
@@ -175,7 +149,6 @@ def retrieve_similar(retrieval_bundle: Dict[str, Any], vectorizer, query_masked:
     for idx in top_idx:
         row = templates_df.iloc[int(idx)].to_dict()
         row["similarity"] = float(sims[int(idx)])
-        # compact priority dist
         dist = row.get("priority_dist", {})
         row["priority_dist_str"] = ", ".join([f"{k}:{dist.get(k,0):.2f}" for k in ALLOWED_PRIORITIES if k in dist])
         rows.append(row)
@@ -189,10 +162,6 @@ def retrieve_similar(retrieval_bundle: Dict[str, Any], vectorizer, query_masked:
 
 
 def explain_linear(model, vectorizer, text_masked: str, target_class: str, top_n: int = 12) -> List[Tuple[str, float]]:
-    """
-    Простая локальная объяснимость для линейной модели:
-    вклад фичи = tfidf(feature) * coef(feature).
-    """
     if not hasattr(model, "coef_"):
         return []
 
@@ -205,14 +174,13 @@ def explain_linear(model, vectorizer, text_masked: str, target_class: str, top_n
         return []
 
     k = classes.index(target_class)
-    coef = model.coef_[k]  # shape: (n_features,)
-    # Sparse row indices & values
+    coef = model.coef_[k] 
+
     idx = X.indices
     vals = X.data * coef[idx]
     if len(vals) == 0:
         return []
 
-    # take top positive contributions
     order = np.argsort(-vals)
     feats = vectorizer.get_feature_names_out()
     out = []
@@ -225,9 +193,6 @@ def explain_linear(model, vectorizer, text_masked: str, target_class: str, top_n
     return out
 
 
-# ---------------------------
-# GPT explanation + fallback
-# ---------------------------
 @st.cache_resource
 def load_llm():
     load_dotenv(os.path.join(ROOT_DIR, ".env"))
@@ -281,12 +246,12 @@ Notes:
 
 
 def safe_parse_json(text: str) -> Dict[str, Any]:
-    # Try direct
+
     try:
         return json.loads(text)
     except Exception:
         pass
-    # Try extract first {...}
+
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if not m:
         return {"summary": "GPT returned non-JSON", "raw": text}
@@ -336,7 +301,7 @@ def decide_final_priority(ml_priority: str, ml_conf: float, policy_floor: Option
     - если ml_conf низкий -> можно взять gpt_suggested (но всё равно не ниже policy floor)
     """
     floor_applied = apply_policy_floor(ml_priority, policy_floor)
-    # If ML is uncertain, let GPT influence (but keep floor)
+
     if ml_conf < 0.45 and gpt_suggested:
         combined = apply_policy_floor(gpt_suggested, policy_floor)
         return combined, "gpt_fallback_due_to_low_ml_confidence"
@@ -368,18 +333,15 @@ def save_feedback(ticket_hash: str, ticket_masked: str, predicted: str, correcte
     df.to_csv(FEEDBACK_PATH, index=False)
 
 
-# ---------------------------
-# UI
-# ---------------------------
 st.set_page_config(page_title="IT Ticket Triage", layout="wide")
 
-st.title("IT Ticket Triage: ML + Policy + GPT (Transformer)")
+st.title("IT Ticket Triage")
 
 with st.expander("Что здесь происходит (коротко)", expanded=True):
     st.markdown(
         """
 - **ML модель (локально)** предсказывает priority по тексту.
-- **Policy слой** поднимает приоритет для security/fraud/outage/срочно (включая RU/EN паттерны).
+- **Policy слой** поднимает приоритет для security/fraud/outage/.
 - **GPT (Transformer)** всегда генерирует объяснение + next steps, и может быть fallback при низкой уверенности ML.
 - **Similar tickets** показываются **без дублей**: вместо 3 одинаковых — один шаблон + распределение приоритетов (показывает шум разметки).
 - **Audit** лог пишет только masked текст + хэши.
@@ -398,18 +360,6 @@ with col1:
     ticket = st.text_area("Вставь текст тикета", height=160, placeholder="Например: My account was hacked and money was stolen...")
     triage_btn = st.button("Run triage", type="primary")
 
-with col2:
-    st.subheader("Model metrics (из artifacts/metrics.json)")
-    if metrics:
-        st.json({
-            "split": metrics.get("split"),
-            "model": metrics.get("model"),
-            "accuracy": metrics.get("accuracy"),
-            "macro_f1": metrics.get("macro_f1"),
-            "pred_distribution_test": metrics.get("prediction_distribution_test"),
-        })
-    else:
-        st.info("metrics.json не найден.")
 
 if triage_btn:
     if not ticket.strip():
@@ -419,17 +369,13 @@ if triage_btn:
     ticket_hash = sha256_text(ticket)
     ticket_masked = mask_pii(ticket)
 
-    # 1) ML prediction
     ml_priority, ml_conf, ml_proba = ml_predict_priority(model, vectorizer, ticket_masked)
 
-    # 2) Similar templates (deduped)
     similar_df = retrieve_similar(retrieval_bundle, vectorizer, ticket_masked, top_k=5)
 
-    # 3) Policy floor
     floor = policy_min_priority(ticket_masked)
     priority_after_floor = apply_policy_floor(ml_priority, floor)
 
-    # 4) GPT explanation (always)
     try:
         llm = load_llm()
         gpt_json = gpt_explain(
@@ -446,7 +392,6 @@ if triage_btn:
         gpt_json = {"summary": "GPT error", "error": str(e)}
     gpt_suggested = normalize_priority(gpt_json.get("suggested_priority"))
 
-    # 5) Final decision
     final_priority, decision_reason = decide_final_priority(
         ml_priority=ml_priority,
         ml_conf=ml_conf,
@@ -454,10 +399,8 @@ if triage_btn:
         gpt_suggested=gpt_suggested,
     )
 
-    # local explainability (top features)
     top_feats = explain_linear(model, vectorizer, ticket_masked, target_class=ml_priority, top_n=12)
 
-    # audit
     audit_payload = {
         "timestamp_utc": datetime.utcnow().isoformat(),
         "ticket_hash": ticket_hash,
@@ -483,9 +426,6 @@ if triage_btn:
     }
     audit_log(audit_payload)
 
-    # ---------------------------
-    # Display results
-    # ---------------------------
     st.divider()
     out1, out2 = st.columns([1, 1])
 
