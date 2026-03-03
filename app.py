@@ -337,14 +337,13 @@ st.set_page_config(page_title="IT Ticket Triage", layout="wide")
 
 st.title("IT Ticket Triage")
 
-with st.expander("Что здесь происходит (коротко)", expanded=True):
+with st.expander("Как все работает?", expanded=False):
     st.markdown(
         """
 - **ML модель (локально)** предсказывает priority по тексту.
 - **Policy слой** поднимает приоритет для security/fraud/outage/.
 - **GPT (Transformer)** всегда генерирует объяснение + next steps, и может быть fallback при низкой уверенности ML.
-- **Similar tickets** показываются **без дублей**: вместо 3 одинаковых — один шаблон + распределение приоритетов (показывает шум разметки).
-- **Audit** лог пишет только masked текст + хэши.
+- **Similar tickets** показываются.
         """
     )
 
