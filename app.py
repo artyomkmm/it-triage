@@ -443,7 +443,7 @@ if triage_btn:
             st.info("Нет локальных фич для объяснения (возможно, все слова OOV).")
 
     with out2:
-        st.subheader("GPT explanation (JSON)")
+        st.subheader("GPT explanation")
         st.json(gpt_json)
 
     st.subheader("Similar historical ticket templates (deduped)")
